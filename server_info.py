@@ -4,7 +4,7 @@
 # @Author   : Tanxiaoshu
 # @File     : server_info.py
 # @Library  : install psutil,
-# @Parameter: {'cpu_percent':"90",'mem_percent':"90",'swap_mem_percent':"90",'disk_percent':"90"}
+# @Parameter: {'cpu_percent':"50",'mem_percent':"50",'swap_mem_percent':"50",'disk_percent':"50"}
 
 '''需要用到第三方模块psutil。脚本需要传递一个字典参数，如上parameter格式，参数需要加引号'''
 
@@ -21,8 +21,7 @@ import sys
 import psutil
 import datetime
 
-minions = eval(sys.argv[1])
-#minions = {'cpu_percent':"90",'mem_percent':"90",'swap_mem_percent':"90",'disk_percent':"90"}
+monitors = eval(sys.argv[1])
 result = {}
 
 if platform.system().lower() == 'linux':
@@ -32,7 +31,7 @@ if platform.system().lower() == 'linux':
 			sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 			sock.connect(('8.8.8.8',80))
 			Ip = sock.getsockname()[0]
-			result['ip'] = Ip
+			result['ip'] = {'value':Ip,'unit':' ','status':0}
 			#print(result['ip'])
 			return result['ip']
 		except:
@@ -41,21 +40,26 @@ if platform.system().lower() == 'linux':
 
 	def os_version():
 		'''获取主机类型及版本'''
-		result['os_version'] = platform.platform()
-		return result['os_version']
+		os = platform.system()
+		result['system_type'] = {'value':os,'unit':' ','status':0}
+		osversion = platform.uname()[2]
+		result['system_version'] = {'value':osversion,'unit':' ','status':0}
+		return result['system_type'],result['system_version']
 
 	def uptime():
 		'''主机运行时间'''
 		with open("/proc/uptime") as f:
 			for line in f:
 				up_time = float(line.split()[0].split(".")[0]) / 86400
-				result['os_uptime'] = str(float("%.1f" % up_time)) + "day"
+				os_uptime = float("%.1f" % up_time)
+				result['os_uptime'] = {'value':os_uptime,'unit':'day','status':0}
 				# print(result['os_uptime'])
 				return result['os_uptime']
 
 	def now_time():
 		'''主机当前时间'''
-		result['now_time'] = time.strftime('%Y-%m-%d %H:%M:%S',time.localtime())
+		nowtime = time.strftime('%Y-%m-%d %H:%M:%S',time.localtime())
+		result['now_time'] = {'value':nowtime,'unit':' ','status':0}
 		return result['now_time']
 
 
@@ -69,12 +73,15 @@ if platform.system().lower() == 'linux':
 			for line in stdout.readlines():
 				# print(line)
 				if re.search('LV Status', line):
-					status = line.split()[2]
-					if status == "NOT available":
-						lv_status.append(status)
-
-			result['lv_status'] = len(lv_status)
-			#print(result['lv_status'])
+					stat = line.split()[2]
+					if stat == "NOT available":
+						lv_status.append(stat)
+			if len(lv_status) > 0:
+				status = 1
+			else:
+				status = 0
+			result['lv_status'] = {'value':len(lv_status),'unit':' ','status':status}
+			return result['lv_status']
 		except:
 			result['lv_status'] = None
 
@@ -95,7 +102,11 @@ if platform.system().lower() == 'linux':
 					# print(line)
 					if re.search(r'%s.*(Error|error)' % (day), line):
 						i += 1
-				result['message_log'] = i
+				if i > 0:
+					status = 1
+				else:
+					status = 0
+				result['message_log'] = {'value':i,'unit':' ','status':status}
 			return result['message_log']
 		except:
 			result['message_log'] = None
@@ -110,7 +121,11 @@ if platform.system().lower() == 'linux':
 					# print(line)
 					if re.search(r'(Error|error)', line):
 						i += 1
-				result['dmesg_log'] = i
+				if i > 0:
+					status = 1
+				else:
+					status = 0
+				result['dmesg_log'] = {'value':i,'unit':' ','status':status}
 			return result['dmesg_log']
 		except:
 			result['dmesg_log'] = None
@@ -132,29 +147,34 @@ if platform.system().lower() == 'linux':
 		total = total2 - total1
 		cpu_used = cpu_idel * 100 // total
 		# cpu_result['cpu_used'] = cpu_used
-		if int(cpu_used) > int(minions['cpu_percent']):
-			result['cpu_status'] = "异常"
+		if int(cpu_used) > int(monitors['cpu_percent']):
+			status = 1
 		else:
-			result['cpu_status'] = "正常"
+			status = 0
+		result['cpu'] = {'value':cpu_used,'unit':'%','status':status}
 		# print(result['cpu_status'])
-		return result['cpu_status']
+		return result['cpu']
 
 	def process():
 		'''获取主机进程数'''
 		stdout = subprocess.Popen('ps -ef|wc -l',shell=True,stdout=subprocess.PIPE).stdout.read().strip()
-		result['process'] = stdout
+		p = stdout
+		result['process'] = {'value':p,'unit':" ",'status':0}
 		return result['process']
 
 	def process_zombie():
 		'''获取主机僵尸进程数'''
 		stdout = subprocess.Popen('top -n1|head -2|tail -1', shell=True, stdout=subprocess.PIPE).stdout.read().strip()
-		#print(stdout)
 		#zombie = re.search(r'stopped,\s*?([0-9]).*zombie',stdout)
 		zombie = re.split('\s+',stdout)
-		result['zombie'] = zombie[-2]
+		z = zombie[-2]
+		if z > 0:
+			status = 1
+		else:
+			status = 0
+		result['zombie'] = {'value':z,'unit':' ','status':status}
 		#print(result['zombie'])
 		return result['zombie']
-
 
 
 	#巡检磁盘
@@ -210,17 +230,14 @@ if platform.system().lower() == 'linux':
 
 	def disk():
 		for i in disk_partitions():
-			#获取磁盘使用率
+			# 获取磁盘使用率
 			# print(i[1])
 			value = list(disk_usage(i[1]))
-			result[i[1]] = str(value[3]) + "%"
-			if int(value[3]) < minions['disk_percent']:
-				result[i[1] + "_status"] = "OK"
+			if int(value[3]) < monitors['disk_percent']:
+				status = 0
 			else:
-				result[i[1] + "_status"] = "ERROR"
-			# print(result[i[1]],result[i[1] + "status"])
-		# print(result)
-
+				status = 1
+			result[i[1]] = {'value':value[3],'unit':'%','status':status}
 
 	def mem_info():
 		'''获取内存大小，使用率等'''
@@ -228,20 +245,16 @@ if platform.system().lower() == 'linux':
 		with open('/proc/meminfo') as f:
 			for line in f:
 				meminfo[line.split(':')[0]] = int(line.split(':')[1].strip().split()[0])
-		result['mem_total'] = str(int(meminfo['MemTotal']) // 1024) + "M"
-		# mem_result['free_mem'] = meminfo['MemFree']
-		used_mem = int(meminfo['MemTotal']) - int(meminfo['MemFree']) - int(meminfo['Buffers']) - int(meminfo['Cached'])
-		result['mem_used'] = str((int(meminfo['MemTotal']) - int(meminfo['MemFree']) - int(meminfo['Buffers']) - int(meminfo['Cached'])) // 1024) + "M"
-		# print(mem_result)
-		mem_used_percent = int(used_mem) * 100 // int(meminfo['MemTotal'])
-		result['mem_used_percent'] = str(mem_used_percent) + "%"
-		# print(mem_used_percent)
-		if mem_used_percent > minions['mem_percent']:
-			result['mem_status'] = '异常'
+		mem_total = int(meminfo['MemTotal']) // 1024
+		result['mem_total'] = {'value':mem_total,'unit':'M','status':0}
+		mem_used = (int(meminfo['MemTotal']) - int(meminfo['MemFree']) - int(meminfo['Buffers']) - int(meminfo['Cached'])) // 1024
+		result['mem_used'] = {'value':mem_used,'unit':'M','status':0}
+		mem_used_percent = int(mem_used) * 100 // int(mem_total)
+		if mem_used_percent > monitors['mem_percent']:
+			status = 1
 		else:
-			result['mem_status'] = '正常'
-		#print(result)
-		#return {'mem_total': result['total_mem'], 'mem_percent': result['mem_status']}
+			status = 0
+		result['mem_used_percent'] = {'value':mem_used_percent,'unit':'%','status':status}
 
 	def swap():
 		'''获取swap大小及使用率等'''
@@ -249,14 +262,17 @@ if platform.system().lower() == 'linux':
 			for line in f:
 				if line.startswith('SwapTotal'):
 					swaptotal = line.split()[1]
-					result['swaptotal'] = str(int(swaptotal) // 1024) + "M"
+					result['swaptotal'] = {'value':int(swaptotal) // 1024,'unit':"M",'status':0}
 					#print(swaptotal)
 				elif line.startswith('SwapFree'):
 					swapfree = line.split()[1]
 					#print(swapfree)
 			swap_used = (int(swaptotal) - int(swapfree)) // int(swaptotal) * 100
-			swap_used_percent = '{:.0%}'.format(swap_used)
-			result['swap_used_percent'] = swap_used_percent
+			if swap_used > 0:
+				status = 1
+			else:
+				status = 0
+			result['swap_used_percent'] = {'value':swap_used,'unit':'%','status':status}
 			return result['swap_used_percent']
 
 
@@ -296,7 +312,7 @@ elif platform.system().lower() == 'windows':
 		'''获取cpu使用率'''
 		cpu_percent = psutil.cpu_percent(interval=1)
 		result['cpu_percent'] = cpu_percent
-		if int(cpu_percent) > int(minions['cpu_percent']):
+		if int(cpu_percent) > int(monitors['cpu_percent']):
 			result['cpu_status'] = '异常'.decode('utf-8')
 		else:
 			result['cpu_status'] = '正常'.decode('utf-8')
@@ -318,7 +334,7 @@ elif platform.system().lower() == 'windows':
 			id = i.device
 			for disk_name in id.split(':')[0]:
 				result[disk_name + "_disk_percent"] = psutil.disk_usage(id).percent
-				if int(result[disk_name + "_disk_percent"]) > int(minions['disk_percent']):
+				if int(result[disk_name + "_disk_percent"]) > int(monitors['disk_percent']):
 					result[disk_name + '_disk_status'] = '异常'.decode('utf-8')
 				else:
 					result[disk_name + '_disk_status'] = '正常'.decode('utf-8')
@@ -330,7 +346,7 @@ elif platform.system().lower() == 'windows':
 		mem_percent = psutil.virtual_memory().percent
 		result['mem_total'] = str(mem_total) + "M"
 		result['mem_percent'] = mem_percent
-		if int(mem_percent) > minions['mem_percent']:
+		if int(mem_percent) > monitors['mem_percent']:
 			result['mem_status'] = '异常'.decode('utf-8')
 		else:
 			result['mem_status'] = '正常'.decode('utf-8')
@@ -340,7 +356,7 @@ elif platform.system().lower() == 'windows':
 		swap_mem_percent = psutil.swap_memory().percent
 		result['swap_mem_total'] = str(swap_mem_total) + "M"
 		result['swap_mem_percent'] = swap_mem_percent
-		if int(swap_mem_percent) > minions['swap_mem_percent']:
+		if int(swap_mem_percent) > monitors['swap_mem_percent']:
 			result['swap_mem_status'] = '异常'.decode('utf-8')
 		else:
 			result['swap_mem_status'] = '正常'.decode('utf-8')
